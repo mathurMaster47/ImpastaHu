@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Impasta Hu</title>
   <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/png" href="icon.png" />
   <meta name="theme-color" content="#e63946" />
   <style>
     :root {
@@ -157,11 +158,17 @@
   let wordDatabase = [];
   let players = []; // [{ id, name, isHost }]
 
-  // Load JSON Dataset
+  // Load JSON Dataset (Handles array format or { categories: [...] } object)
   fetch('words.json')
     .then(res => res.json())
     .then(data => {
-      wordDatabase = data.categories;
+      if (Array.isArray(data)) {
+        wordDatabase = data;
+      } else if (data.categories) {
+        wordDatabase = data.categories;
+      } else {
+        wordDatabase = [];
+      }
       populateCategories();
     })
     .catch(err => console.error("Error loading words.json:", err));
@@ -291,14 +298,14 @@
     });
   }
 
-  // --- GAME LOGIC (2 RANDOM WORDS FROM CATEGORY) ---
+  // --- GAME LOGIC ---
   function startGame() {
     if (players.length < 3) return alert("Need at least 3 players to start!");
 
     const selectedCategoryId = document.getElementById('category-select').value;
     const categoryObj = wordDatabase.find(c => c.id === selectedCategoryId);
 
-    if (!categoryObj || categoryObj.items.length < 2) {
+    if (!categoryObj || !categoryObj.items || categoryObj.items.length < 2) {
       return alert("Not enough items in this category!");
     }
 
@@ -318,7 +325,7 @@
 
     // 3. Dispatch words to everyone
     players.forEach(p => {
-      const isImp = (p.id === impastaPlayerId);
+      const isImp = (p.id === peer.id);
       const assignedWord = isImp ? impastaWord : normalWord;
 
       if (p.id === peer.id) {
