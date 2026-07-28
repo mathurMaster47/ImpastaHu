@@ -42,6 +42,25 @@
     h1 { margin: 0 0 4px 0; font-size: 2.2rem; color: var(--primary); }
     p.subtitle { margin-top: 0; color: #666; font-size: 0.95rem; }
 
+    .tab-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 10px;
+      background: #eee;
+      border: 2px solid var(--dark);
+      border-radius: 10px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      background: var(--primary);
+      color: white;
+    }
+
     .screen { display: none; }
     .screen.active { display: block; }
 
@@ -84,6 +103,7 @@
       font-weight: bold;
       display: flex;
       justify-content: space-between;
+      align-items: center;
     }
 
     .secret-card {
@@ -108,8 +128,47 @@
   <h1>🎭 Impasta Hu</h1>
   <p class="subtitle">Desi Party Game of Imposters!</p>
 
-  <!-- SCREEN 1: HOME -->
-  <div id="home-screen" class="screen active">
+  <!-- MODE SELECTOR TABS -->
+  <div class="tab-bar" id="mode-tabs">
+    <button class="tab-btn active" onclick="switchMode('pass')">📱 Pass Phone</button>
+    <button class="tab-btn" onclick="switchMode('online')">🌐 Multi-Phone</button>
+  </div>
+
+  <!-- ==================== PASS PHONE SETUP ==================== -->
+  <div id="pass-setup-screen" class="screen active">
+    <h3>Pass Around Setup</h3>
+    
+    <div style="display: flex; gap: 6px;">
+      <input type="text" id="local-player-input" placeholder="Player Name" />
+      <button class="btn-primary" onclick="addLocalPlayer()" style="width: auto; padding: 0 16px;">Add</button>
+    </div>
+
+    <ul class="player-list" id="local-player-list"></ul>
+
+    <label style="font-weight: bold; display: block; margin-top: 10px;">Choose Category:</label>
+    <select id="local-category-select"></select>
+
+    <button class="btn-primary" onclick="startPassGame()">Start Pass Game 🚀</button>
+  </div>
+
+  <!-- ==================== PASS PHONE STEP SCREEN ==================== -->
+  <div id="pass-step-screen" class="screen">
+    <h2 id="pass-player-title" style="color: var(--primary);">Hand phone to: Player</h2>
+    <p style="color: #666; font-size: 0.9rem;">Make sure no one else is looking!</p>
+
+    <div class="secret-card" onclick="toggleLocalRoleReveal()">
+      <div id="local-card-prompt">Tap to reveal secret card 🕵️</div>
+      <div id="local-role-display" style="display: none;">
+        <span id="local-role-title"></span>
+        <div class="secret-word" id="local-word-display"></div>
+      </div>
+    </div>
+
+    <button class="btn-secondary" onclick="nextPassTurn()">Done & Pass Phone 📱</button>
+  </div>
+
+  <!-- ==================== MULTI-PHONE HOME ==================== -->
+  <div id="home-screen" class="screen">
     <input type="text" id="player-name" placeholder="YOUR NAME" maxlength="12" />
     <button class="btn-primary" onclick="createLobby()">Create New Lobby</button>
     <hr style="margin: 16px 0; border: none; border-top: 1px dashed #ccc;" />
@@ -117,14 +176,13 @@
     <button class="btn-secondary" onclick="joinLobby()">Join Lobby</button>
   </div>
 
-  <!-- SCREEN 2: LOBBY -->
+  <!-- ==================== MULTI-PHONE LOBBY ==================== -->
   <div id="lobby-screen" class="screen">
     <h3>ROOM CODE: <span id="display-room-code" style="color: var(--primary);">----</span></h3>
     <span class="status-badge" id="network-status">Connecting...</span>
     <p>Connected Players:</p>
     <ul class="player-list" id="player-list"></ul>
 
-    <!-- Host Category Control -->
     <div id="host-controls" style="display: none; margin-top: 15px;">
       <label for="category-select" style="font-weight: bold; display: block; margin-bottom: 4px;">Choose Category:</label>
       <select id="category-select"></select>
@@ -132,7 +190,7 @@
     </div>
   </div>
 
-  <!-- SCREEN 3: GAMEPLAY -->
+  <!-- ==================== MULTI-PHONE GAMEPLAY ==================== -->
   <div id="game-screen" class="screen">
     <div class="secret-card" onclick="toggleRoleReveal()">
       <div id="card-prompt">Tap to reveal your secret card 🕵️</div>
@@ -144,43 +202,35 @@
     <p style="font-size: 0.85rem; color: #777;">Keep your screen hidden from others!</p>
     <button id="reset-btn" class="btn-secondary" onclick="resetToLobby()" style="display:none;">Back to Lobby</button>
   </div>
+
 </div>
 
 <script>
-  const PEER_PREFIX = "impasta-hu-room-";
-  let peer = null;
-  let connections = {}; // For Host: { peerId: connectionObj }
-  let hostConnection = null; // For Clients: connection to Host
-
-  let isHost = false;
-  let roomCode = "";
-  let myName = "";
   let wordDatabase = [];
-  let players = []; // [{ id, name, isHost }]
+  let localPlayers = ["Rohan", "Priya", "Aarav"];
+  let currentPassIndex = 0;
+  let passRoles = [];
 
-  // Load JSON Dataset (Handles array format or { categories: [...] } object)
+  // Load JSON Dataset
   fetch('words.json')
     .then(res => res.json())
     .then(data => {
-      if (Array.isArray(data)) {
-        wordDatabase = data;
-      } else if (data.categories) {
-        wordDatabase = data.categories;
-      } else {
-        wordDatabase = [];
-      }
-      populateCategories();
+      wordDatabase = Array.isArray(data) ? data : (data.categories || []);
+      populateCategorySelects();
     })
     .catch(err => console.error("Error loading words.json:", err));
 
-  function populateCategories() {
-    const select = document.getElementById('category-select');
-    select.innerHTML = '';
-    wordDatabase.forEach(cat => {
-      const opt = document.createElement('option');
-      opt.value = cat.id;
-      opt.innerText = cat.name;
-      select.appendChild(opt);
+  function populateCategorySelects() {
+    const selects = [document.getElementById('category-select'), document.getElementById('local-category-select')];
+    selects.forEach(sel => {
+      if (!sel) return;
+      sel.innerHTML = '';
+      wordDatabase.forEach(cat => {
+        const opt = document.createElement('option');
+        opt.value = cat.id;
+        opt.innerText = cat.name;
+        sel.appendChild(opt);
+      });
     });
   }
 
@@ -189,11 +239,115 @@
     document.getElementById(id).classList.add('active');
   }
 
-  function makeCode() {
-    return Math.random().toString(36).substring(2, 6).toUpperCase();
+  function switchMode(mode) {
+    const tabs = document.querySelectorAll('.tab-btn');
+    tabs[0].classList.toggle('active', mode === 'pass');
+    tabs[1].classList.toggle('active', mode === 'online');
+
+    if (mode === 'pass') {
+      renderLocalPlayers();
+      showScreen('pass-setup-screen');
+    } else {
+      showScreen('home-screen');
+    }
   }
 
-  // --- HOST FLOW ---
+  /* --- PASS PHONE LOGIC --- */
+  function addLocalPlayer() {
+    const input = document.getElementById('local-player-input');
+    const name = input.value.trim();
+    if (name && !localPlayers.includes(name)) {
+      localPlayers.push(name);
+      input.value = '';
+      renderLocalPlayers();
+    }
+  }
+
+  function removeLocalPlayer(index) {
+    if (localPlayers.length > 3) {
+      localPlayers.splice(index, 1);
+      renderLocalPlayers();
+    } else {
+      alert("At least 3 players needed!");
+    }
+  }
+
+  function renderLocalPlayers() {
+    const list = document.getElementById('local-player-list');
+    list.innerHTML = '';
+    localPlayers.forEach((p, idx) => {
+      const li = document.createElement('li');
+      li.className = 'player-item';
+      li.innerHTML = `<span>${p}</span> <button onclick="removeLocalPlayer(${idx})" style="width:auto; padding:2px 8px; margin:0; background:#e74c3c; color:white;">×</button>`;
+      list.appendChild(li);
+    });
+  }
+
+  function startPassGame() {
+    if (localPlayers.length < 3) return alert("Need at least 3 players!");
+
+    const categoryId = document.getElementById('local-category-select').value;
+    const cat = wordDatabase.find(c => c.id === categoryId);
+    if (!cat || cat.items.length < 2) return alert("Select a valid category!");
+
+    let wordA = cat.items[Math.floor(Math.random() * cat.items.length)];
+    let wordB;
+    do {
+      wordB = cat.items[Math.floor(Math.random() * cat.items.length)];
+    } while (wordB === wordA);
+
+    const impastaIdx = Math.floor(Math.random() * localPlayers.length);
+
+    passRoles = localPlayers.map((name, idx) => ({
+      name,
+      isImpasta: idx === impastaIdx,
+      word: idx === impastaIdx ? wordB : wordA
+    }));
+
+    currentPassIndex = 0;
+    renderPassStep();
+    showScreen('pass-step-screen');
+  }
+
+  function renderPassStep() {
+    const p = passRoles[currentPassIndex];
+    document.getElementById('pass-player-title').innerText = `Hand phone to: ${p.name}`;
+    document.getElementById('local-role-title').innerText = p.isImpasta ? "🚨 YOU ARE THE IMPASTA!" : "🍝 REAL PLAYER";
+    document.getElementById('local-word-display').innerText = p.word;
+
+    document.getElementById('local-role-display').style.display = 'none';
+    document.getElementById('local-card-prompt').style.display = 'block';
+  }
+
+  function toggleLocalRoleReveal() {
+    const prompt = document.getElementById('local-card-prompt');
+    const role = document.getElementById('local-role-display');
+    if (role.style.display === 'none') {
+      role.style.display = 'block';
+      prompt.style.display = 'none';
+    } else {
+      role.style.display = 'none';
+      prompt.style.display = 'block';
+    }
+  }
+
+  function nextPassTurn() {
+    if (currentPassIndex + 1 < passRoles.length) {
+      currentPassIndex++;
+      renderPassStep();
+    } else {
+      alert("All players have seen their roles! Start discussing and find the Impasta!");
+      showScreen('pass-setup-screen');
+    }
+  }
+
+  /* --- MULTI-PHONE PEERJS LOGIC --- */
+  const PEER_PREFIX = "impasta-hu-room-";
+  let peer = null, connections = {}, hostConnection = null;
+  let isHost = false, roomCode = "", myName = "", players = [];
+
+  function makeCode() { return Math.random().toString(36).substring(2, 6).toUpperCase(); }
+
   function createLobby() {
     myName = document.getElementById('player-name').value.trim();
     if (!myName) return alert("Please enter your name!");
@@ -204,7 +358,6 @@
     document.getElementById('host-controls').style.display = 'block';
 
     peer = new Peer(PEER_PREFIX + roomCode);
-
     peer.on('open', id => {
       document.getElementById('network-status').innerText = "Lobby Ready";
       players = [{ id: peer.id, name: myName, isHost: true }];
@@ -213,7 +366,14 @@
     });
 
     peer.on('connection', conn => {
-      conn.on('data', data => handleHostMessages(conn, data));
+      conn.on('data', data => {
+        if (data.type === 'JOIN') {
+          connections[conn.peer] = conn;
+          players.push({ id: conn.peer, name: data.name, isHost: false });
+          broadcast({ type: 'SYNC_PLAYERS', players });
+          renderPlayers();
+        }
+      });
       conn.on('close', () => {
         delete connections[conn.peer];
         players = players.filter(p => p.id !== conn.peer);
@@ -221,24 +381,10 @@
         renderPlayers();
       });
     });
-
-    peer.on('error', err => alert("Network error: " + err.type));
   }
 
-  function handleHostMessages(conn, data) {
-    if (data.type === 'JOIN') {
-      connections[conn.peer] = conn;
-      players.push({ id: conn.peer, name: data.name, isHost: false });
-      broadcast({ type: 'SYNC_PLAYERS', players });
-      renderPlayers();
-    }
-  }
+  function broadcast(data) { Object.values(connections).forEach(c => c.send(data)); }
 
-  function broadcast(data) {
-    Object.values(connections).forEach(conn => conn.send(data));
-  }
-
-  // --- CLIENT FLOW ---
   function joinLobby() {
     myName = document.getElementById('player-name').value.trim();
     roomCode = document.getElementById('room-code-input').value.trim().toUpperCase();
@@ -249,42 +395,29 @@
     document.getElementById('host-controls').style.display = 'none';
 
     peer = new Peer();
-
     peer.on('open', id => {
-      document.getElementById('network-status').innerText = "Connecting to host...";
+      document.getElementById('network-status').innerText = "Connecting...";
       hostConnection = peer.connect(PEER_PREFIX + roomCode);
-
       hostConnection.on('open', () => {
         document.getElementById('network-status').innerText = "Connected!";
         hostConnection.send({ type: 'JOIN', name: myName });
         showScreen('lobby-screen');
       });
-
-      hostConnection.on('data', data => handleClientMessages(data));
-      hostConnection.on('close', () => {
-        alert("Lobby closed by host.");
-        location.reload();
+      hostConnection.on('data', data => {
+        if (data.type === 'SYNC_PLAYERS') {
+          players = data.players;
+          renderPlayers();
+        } else if (data.type === 'START_GAME') {
+          document.getElementById('role-title').innerText = data.isImpasta ? "🚨 YOU ARE THE IMPASTA!" : "🍝 REAL PLAYER";
+          document.getElementById('word-display').innerText = data.word;
+          document.getElementById('role-display').style.display = 'none';
+          document.getElementById('card-prompt').style.display = 'block';
+          showScreen('game-screen');
+        } else if (data.type === 'RESET_LOBBY') {
+          showScreen('lobby-screen');
+        }
       });
     });
-
-    peer.on('error', err => alert("Could not connect to lobby code: " + roomCode));
-  }
-
-  function handleClientMessages(data) {
-    if (data.type === 'SYNC_PLAYERS') {
-      players = data.players;
-      renderPlayers();
-    } else if (data.type === 'START_GAME') {
-      document.getElementById('role-title').innerText = data.isImpasta ? "🚨 YOU ARE THE IMPASTA!" : "🍝 REAL PLAYER";
-      document.getElementById('word-display').innerText = data.word;
-      
-      // Reset card hide state
-      document.getElementById('role-display').style.display = 'none';
-      document.getElementById('card-prompt').style.display = 'block';
-      showScreen('game-screen');
-    } else if (data.type === 'RESET_LOBBY') {
-      showScreen('lobby-screen');
-    }
   }
 
   function renderPlayers() {
@@ -298,79 +431,40 @@
     });
   }
 
-  // --- GAME LOGIC ---
   function startGame() {
-    if (players.length < 3) return alert("Need at least 3 players to start!");
+    if (players.length < 3) return alert("Need 3+ players!");
+    const cat = wordDatabase.find(c => c.id === document.getElementById('category-select').value);
+    let wordA = cat.items[Math.floor(Math.random() * cat.items.length)], wordB;
+    do { wordB = cat.items[Math.floor(Math.random() * cat.items.length)]; } while (wordB === wordA);
 
-    const selectedCategoryId = document.getElementById('category-select').value;
-    const categoryObj = wordDatabase.find(c => c.id === selectedCategoryId);
-
-    if (!categoryObj || !categoryObj.items || categoryObj.items.length < 2) {
-      return alert("Not enough items in this category!");
-    }
-
-    // 1. Pick 2 different random words from the category
-    let wordAIndex = Math.floor(Math.random() * categoryObj.items.length);
-    let wordBIndex;
-    do {
-      wordBIndex = Math.floor(Math.random() * categoryObj.items.length);
-    } while (wordBIndex === wordAIndex);
-
-    const normalWord = categoryObj.items[wordAIndex];
-    const impastaWord = categoryObj.items[wordBIndex];
-
-    // 2. Pick 1 random player to be the Impasta
-    const impastaIndex = Math.floor(Math.random() * players.length);
-    const impastaPlayerId = players[impastaIndex].id;
-
-    // 3. Dispatch words to everyone
-    players.forEach(p => {
-      const isImp = (p.id === peer.id);
-      const assignedWord = isImp ? impastaWord : normalWord;
-
+    const impIdx = Math.floor(Math.random() * players.length);
+    players.forEach((p, i) => {
+      const isImp = (i === impIdx);
+      const w = isImp ? wordB : wordA;
       if (p.id === peer.id) {
-        // Host self-assign
         document.getElementById('role-title').innerText = isImp ? "🚨 YOU ARE THE IMPASTA!" : "🍝 REAL PLAYER";
-        document.getElementById('word-display').innerText = assignedWord;
+        document.getElementById('word-display').innerText = w;
         document.getElementById('reset-btn').style.display = 'block';
-        
         document.getElementById('role-display').style.display = 'none';
         document.getElementById('card-prompt').style.display = 'block';
         showScreen('game-screen');
       } else {
-        // Send to connected peer
-        connections[p.id].send({
-          type: 'START_GAME',
-          isImpasta: isImp,
-          word: assignedWord
-        });
+        connections[p.id].send({ type: 'START_GAME', isImpasta: isImp, word: w });
       }
     });
   }
 
   function toggleRoleReveal() {
-    const prompt = document.getElementById('card-prompt');
-    const role = document.getElementById('role-display');
-    if (role.style.display === 'none') {
-      role.style.display = 'block';
-      prompt.style.display = 'none';
-    } else {
-      role.style.display = 'none';
-      prompt.style.display = 'block';
-    }
+    const p = document.getElementById('card-prompt'), r = document.getElementById('role-display');
+    r.style.display = r.style.display === 'none' ? 'block' : 'none';
+    p.style.display = p.style.display === 'none' ? 'block' : 'none';
   }
 
   function resetToLobby() {
-    if (isHost) {
-      broadcast({ type: 'RESET_LOBBY' });
-      showScreen('lobby-screen');
-    }
+    if (isHost) { broadcast({ type: 'RESET_LOBBY' }); showScreen('lobby-screen'); }
   }
 
-  // Register PWA Service Worker
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js');
-  }
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>
 </body>
 </html>
