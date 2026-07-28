@@ -1,0 +1,15 @@
+{
+  "name": "Impasta Hu",
+  "short_name": "ImpastaHu",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#fffbe6",
+  "theme_color": "#e63946",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
