@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Impasta Hu</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#e63946" />
+  <style>
+    :root {
+      --bg: #fffbe6;
+      --primary: #e63946;
+      --secondary: #f4a261;
+      --dark: #2b2d42;
+      --card-bg: #ffffff;
+    }
+
+    * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body {
+      background-color: var(--bg);
+      color: var(--dark);
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 440px;
+      background: var(--card-bg);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+      border: 3px solid var(--dark);
+      text-align: center;
+    }
+
+    h1 { margin: 0 0 4px 0; font-size: 2.2rem; color: var(--primary); }
+    p.subtitle { margin-top: 0; color: #666; font-size: 0.95rem; }
+
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    input, select {
+      width: 100%;
+      padding: 14px;
+      margin: 8px 0;
+      border: 2px solid #ccc;
+      border-radius: 12px;
+      font-size: 1rem;
+      text-align: center;
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      margin: 8px 0;
+      border: none;
+      border-radius: 12px;
+      font-size: 1.05rem;
+      font-weight: bold;
+      cursor: pointer;
+      transition: transform 0.1s;
+    }
+    button:active { transform: scale(0.98); }
+
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-secondary { background: var(--secondary); color: white; }
+
+    .player-list {
+      list-style: none;
+      padding: 0;
+      margin: 16px 0;
+    }
+    .player-item {
+      background: #f8f9fa;
+      padding: 10px;
+      margin: 6px 0;
+      border-radius: 8px;
+      font-weight: bold;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .secret-card {
+      background: var(--dark);
+      color: white;
+      padding: 30px 16px;
+      border-radius: 16px;
+      margin: 20px 0;
+      cursor: pointer;
+      user-select: none;
+    }
+    .secret-word { font-size: 1.8rem; font-weight: bold; color: var(--secondary); margin-top: 10px; }
+    .status-badge { font-size: 0.85rem; background: #e0e0e0; padding: 4px 8px; border-radius: 6px; }
+  </style>
+
+  <!-- PeerJS Library CDN -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+<div class="container">
+  <h1>🎭 Impasta Hu</h1>
+  <p class="subtitle">Desi Party Game of Imposters!</p>
+
+  <!-- SCREEN 1: HOME -->
+  <div id="home-screen" class="screen active">
+    <input type="text" id="player-name" placeholder="YOUR NAME" maxlength="12" />
+    <button class="btn-primary" onclick="createLobby()">Create New Lobby</button>
+    <hr style="margin: 16px 0; border: none; border-top: 1px dashed #ccc;" />
+    <input type="text" id="room-code-input" placeholder="4-LETTER CODE" maxlength="4" style="text-transform: uppercase;" />
+    <button class="btn-secondary" onclick="joinLobby()">Join Lobby</button>
+  </div>
+
+  <!-- SCREEN 2: LOBBY -->
+  <div id="lobby-screen" class="screen">
+    <h3>ROOM CODE: <span id="display-room-code" style="color: var(--primary);">----</span></h3>
+    <span class="status-badge" id="network-status">Connecting...</span>
+    <p>Connected Players:</p>
+    <ul class="player-list" id="player-list"></ul>
+
+    <!-- Host Category Control -->
+    <div id="host-controls" style="display: none; margin-top: 15px;">
+      <label for="category-select" style="font-weight: bold; display: block; margin-bottom: 4px;">Choose Category:</label>
+      <select id="category-select"></select>
+      <button class="btn-primary" onclick="startGame()">Start Game 🚀</button>
+    </div>
+  </div>
+
+  <!-- SCREEN 3: GAMEPLAY -->
+  <div id="game-screen" class="screen">
+    <div class="secret-card" onclick="toggleRoleReveal()">
+      <div id="card-prompt">Tap to reveal your secret card 🕵️</div>
+      <div id="role-display" style="display: none;">
+        <span id="role-title"></span>
+        <div class="secret-word" id="word-display"></div>
+      </div>
+    </div>
+    <p style="font-size: 0.85rem; color: #777;">Keep your screen hidden from others!</p>
+    <button id="reset-btn" class="btn-secondary" onclick="resetToLobby()" style="display:none;">Back to Lobby</button>
+  </div>
+</div>
+
+<script>
+  const PEER_PREFIX = "impasta-hu-room-";
+  let peer = null;
+  let connections = {}; // For Host: { peerId: connectionObj }
+  let hostConnection = null; // For Clients: connection to Host
+
+  let isHost = false;
+  let roomCode = "";
+  let myName = "";
+  let wordDatabase = [];
+  let players = []; // [{ id, name, isHost }]
+
+  // Load JSON Dataset
+  fetch('words.json')
+    .then(res => res.json())
+    .then(data => {
+      wordDatabase = data.categories;
+      populateCategories();
+    })
+    .catch(err => console.error("Error loading words.json:", err));
+
+  function populateCategories() {
+    const select = document.getElementById('category-select');
+    select.innerHTML = '';
+    wordDatabase.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat.id;
+      opt.innerText = cat.name;
+      select.appendChild(opt);
+    });
+  }
+
+  function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  function makeCode() {
+    return Math.random().toString(36).substring(2, 6).toUpperCase();
+  }
+
+  // --- HOST FLOW ---
+  function createLobby() {
+    myName = document.getElementById('player-name').value.trim();
+    if (!myName) return alert("Please enter your name!");
+
+    isHost = true;
+    roomCode = makeCode();
+    document.getElementById('display-room-code').innerText = roomCode;
+    document.getElementById('host-controls').style.display = 'block';
+
+    peer = new Peer(PEER_PREFIX + roomCode);
+
+    peer.on('open', id => {
+      document.getElementById('network-status').innerText = "Lobby Ready";
+      players = [{ id: peer.id, name: myName, isHost: true }];
+      renderPlayers();
+      showScreen('lobby-screen');
+    });
+
+    peer.on('connection', conn => {
+      conn.on('data', data => handleHostMessages(conn, data));
+      conn.on('close', () => {
+        delete connections[conn.peer];
+        players = players.filter(p => p.id !== conn.peer);
+        broadcast({ type: 'SYNC_PLAYERS', players });
+        renderPlayers();
+      });
+    });
+
+    peer.on('error', err => alert("Network error: " + err.type));
+  }
+
+  function handleHostMessages(conn, data) {
+    if (data.type === 'JOIN') {
+      connections[conn.peer] = conn;
+      players.push({ id: conn.peer, name: data.name, isHost: false });
+      broadcast({ type: 'SYNC_PLAYERS', players });
+      renderPlayers();
+    }
+  }
+
+  function broadcast(data) {
+    Object.values(connections).forEach(conn => conn.send(data));
+  }
+
+  // --- CLIENT FLOW ---
+  function joinLobby() {
+    myName = document.getElementById('player-name').value.trim();
+    roomCode = document.getElementById('room-code-input').value.trim().toUpperCase();
+    if (!myName || !roomCode) return alert("Enter your name and room code!");
+
+    isHost = false;
+    document.getElementById('display-room-code').innerText = roomCode;
+    document.getElementById('host-controls').style.display = 'none';
+
+    peer = new Peer();
+
+    peer.on('open', id => {
+      document.getElementById('network-status').innerText = "Connecting to host...";
+      hostConnection = peer.connect(PEER_PREFIX + roomCode);
+
+      hostConnection.on('open', () => {
+        document.getElementById('network-status').innerText = "Connected!";
+        hostConnection.send({ type: 'JOIN', name: myName });
+        showScreen('lobby-screen');
+      });
+
+      hostConnection.on('data', data => handleClientMessages(data));
+      hostConnection.on('close', () => {
+        alert("Lobby closed by host.");
+        location.reload();
+      });
+    });
+
+    peer.on('error', err => alert("Could not connect to lobby code: " + roomCode));
+  }
+
+  function handleClientMessages(data) {
+    if (data.type === 'SYNC_PLAYERS') {
+      players = data.players;
+      renderPlayers();
+    } else if (data.type === 'START_GAME') {
+      document.getElementById('role-title').innerText = data.isImpasta ? "🚨 YOU ARE THE IMPASTA!" : "🍝 REAL PLAYER";
+      document.getElementById('word-display').innerText = data.word;
+      
+      // Reset card hide state
+      document.getElementById('role-display').style.display = 'none';
+      document.getElementById('card-prompt').style.display = 'block';
+      showScreen('game-screen');
+    } else if (data.type === 'RESET_LOBBY') {
+      showScreen('lobby-screen');
+    }
+  }
+
+  function renderPlayers() {
+    const list = document.getElementById('player-list');
+    list.innerHTML = '';
+    players.forEach(p => {
+      const li = document.createElement('li');
+      li.className = 'player-item';
+      li.innerHTML = `<span>${p.name}</span> ${p.isHost ? '👑' : ''}`;
+      list.appendChild(li);
+    });
+  }
+
+  // --- GAME LOGIC (2 RANDOM WORDS FROM CATEGORY) ---
+  function startGame() {
+    if (players.length < 3) return alert("Need at least 3 players to start!");
+
+    const selectedCategoryId = document.getElementById('category-select').value;
+    const categoryObj = wordDatabase.find(c => c.id === selectedCategoryId);
+
+    if (!categoryObj || categoryObj.items.length < 2) {
+      return alert("Not enough items in this category!");
+    }
+
+    // 1. Pick 2 different random words from the category
+    let wordAIndex = Math.floor(Math.random() * categoryObj.items.length);
+    let wordBIndex;
+    do {
+      wordBIndex = Math.floor(Math.random() * categoryObj.items.length);
+    } while (wordBIndex === wordAIndex);
+
+    const normalWord = categoryObj.items[wordAIndex];
+    const impastaWord = categoryObj.items[wordBIndex];
+
+    // 2. Pick 1 random player to be the Impasta
+    const impastaIndex = Math.floor(Math.random() * players.length);
+    const impastaPlayerId = players[impastaIndex].id;
+
+    // 3. Dispatch words to everyone
+    players.forEach(p => {
+      const isImp = (p.id === impastaPlayerId);
+      const assignedWord = isImp ? impastaWord : normalWord;
+
+      if (p.id === peer.id) {
+        // Host self-assign
+        document.getElementById('role-title').innerText = isImp ? "🚨 YOU ARE THE IMPASTA!" : "🍝 REAL PLAYER";
+        document.getElementById('word-display').innerText = assignedWord;
+        document.getElementById('reset-btn').style.display = 'block';
+        
+        document.getElementById('role-display').style.display = 'none';
+        document.getElementById('card-prompt').style.display = 'block';
+        showScreen('game-screen');
+      } else {
+        // Send to connected peer
+        connections[p.id].send({
+          type: 'START_GAME',
+          isImpasta: isImp,
+          word: assignedWord
+        });
+      }
+    });
+  }
+
+  function toggleRoleReveal() {
+    const prompt = document.getElementById('card-prompt');
+    const role = document.getElementById('role-display');
+    if (role.style.display === 'none') {
+      role.style.display = 'block';
+      prompt.style.display = 'none';
+    } else {
+      role.style.display = 'none';
+      prompt.style.display = 'block';
+    }
+  }
+
+  function resetToLobby() {
+    if (isHost) {
+      broadcast({ type: 'RESET_LOBBY' });
+      showScreen('lobby-screen');
+    }
+  }
+
+  // Register PWA Service Worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js');
+  }
+</script>
+</body>
+</html>
